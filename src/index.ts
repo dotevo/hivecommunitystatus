@@ -1,18 +1,19 @@
-import methods from '@hiveio/hive-js/lib/api/methods';
+import { RpcClient } from 'jsonrpc-ts';
 
-methods.push({
-	"api": "bridge",
-	"method": "get_discussion",
-	"params": ["author", "permlink"]
-  });
-import * as hive from "@hiveio/hive-js";
-import * as util from "util";
-//import * as dateFormat from "dateformat";
 
-//console.log(hive);
-
-const getDiscussionsByCreated = util.promisify(hive.api.getDiscussionsByCreated);
-const getComments = util.promisify(hive.api.getDiscussion);
+interface HiveService {
+	'condenser_api.get_discussions_by_created': {
+		tag: string;
+		limit: number;
+		start_author: string | undefined;
+		start_permlink: string | undefined;
+	};
+	'bridge.get_discussion': {
+		author: string;
+		permlink: string;
+	};
+  }
+const rpcClient = new RpcClient<HiveService>({ url: 'https://api.hive.blog/' });
 
 
 function sleep(ms: number) {
@@ -25,21 +26,32 @@ async function getData(communityName: string, size: number) {
 	let start_permlink: string | undefined;
 
 	let result: any[] = [];
-	const iters = size / 30;
+	const iters = size / 20;
+	let id = 1;
 	for(let req=0;req<iters;req++) {
-		console.log("Receiving posts " + req + " / " + iters);
+		console.log("Pobieranie postów " + req + " / " + iters);
 		console.log(start_author, start_permlink);
-		const findPosts = await getDiscussionsByCreated({tag: communityName, limit: 30, start_author: start_author, start_permlink: start_permlink});
+		const response = await rpcClient.makeRequest({
+			method: 'condenser_api.get_discussions_by_created',
+			params: {tag: communityName, limit: 20, start_author: start_author, start_permlink: start_permlink},
+			id: id++,
+			jsonrpc: '2.0',
+		  });
+		const findPosts = response.data.result as any[]; // Fixme: types
+		
 		//console.log(findPosts);
 		const rec = await Promise.all(findPosts.map(async (el: any) => {
-			//console.log("Title" + el.title);
-			const comments = Object.values(await getComments(el.author, el.permlink));
-			//console.log(comments);
-			
-			//console.log(comments);
+			const commentsResp = await rpcClient.makeRequest({
+				method: 'bridge.get_discussion',
+				params: {author: el.author, permlink: el.permlink},
+				id: id++,
+				jsonrpc: '2.0',
+			  });
+
+			const comments = Object.values(commentsResp.data.result);
 			const dates = comments.map((el:any) => new Date(el.created).getTime());
 			const lastComment = dates.length > 0 ? new Date(Math.max.apply(null, dates)) : 0;
-			return {title: el.title, permlink: el.permlink, author: el.author,  created: new Date(el.created), comments: {size: comments.length, lastComment: lastComment}};
+			return {title: el.title, permlink: el.permlink, author: el.author,  created: new Date(el.created), comments: comments, lastComment: lastComment};
 		})) as any[];
 		result = result.concat(rec);
 		if(rec.length == 0) {
@@ -49,39 +61,40 @@ async function getData(communityName: string, size: number) {
 		start_author = result[result.length - 1].author;
 		start_permlink = result[result.length - 1].permlink;
 
-		
+
 		await sleep(2000);
 	}
 
 	result.sort((a: any, b:any) => {
-		if(a.comments.lastComment < b.comments.lastComment) return 1;
-		if(a.comments.lastComment > b.comments.lastComment) return -1;
+		if(a.lastComment < b.lastComment) return 1;
+		if(a.lastComment > b.lastComment) return -1;
 		return 0;
 	})
 
 	var date = new Date();
-	let n =0;
 	result.forEach((element :any, index: number, array: any[]) => {
-/*
-		if(element.created > date) {
-			console.log();
-			console.log("Skipping (new post): " + element.title);
-			return;
-		}
-
-		if(element.comments.lastComment < date) {
-			console.log();
-			console.log("Skipping (no new comments): " + element.title);
-			return;
-		}
-		*/
-
 		console.log();
 		const title = element.title.replace(/(.{80})..+/, "$1…");
-		console.log(index + "." + title.padEnd(80, " ") + ": " + ((date.getTime() - element.created.getTime()) / (1000 * 3600 * 24)).toFixed() + " dni temu");
-		if (element.comments.lastComment !== 0) {
-			console.log("    last: " + element.comments.lastComment.toISOString() + "    comments: " + element.comments.size);
+		console.log((index + "").padStart(2, "0") + "." + title.padEnd(80, " ") + ": " + ((date.getTime() - element.created.getTime()) / (1000 * 3600 * 24)).toFixed() + " dni temu");
+		console.log("    author: " + element.author);
+		console.log("    permlink: " + element.permlink);
+		console.log("    full: @" + element.author + "/" + element.permlink);
+		
+		if(element.comments == null) {
+			return;
 		}
+
+		console.log("    komentarze: ");
+
+		element.comments.sort((a: any, b:any) => {
+			if(a.created < b.created) return 1;
+			if(a.created > b.created) return -1;
+			return 0;
+		})
+
+		element.comments.forEach((comment: any, index: number) => {
+			console.log("      " + (index + "").padStart(2, "0") + "." + comment.author.padEnd(30, " ") + ": " + ((date.getTime() - new Date(comment.created).getTime()) / (1000 * 3600 * 24)).toFixed() + " dni temu");
+		});
 	});
 }
 
