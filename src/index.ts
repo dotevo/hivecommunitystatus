@@ -93,7 +93,9 @@ async function getData(communityName: string, size: number) {
 		})
 
 		element.comments.forEach((comment: any, index: number) => {
-			console.log("      " + (index + "").padStart(2, "0") + "." + comment.author.padEnd(30, " ") + ": " + ((date.getTime() - new Date(comment.created).getTime()) / (1000 * 3600 * 24)).toFixed() + " dni temu");
+			const voted = comment.active_votes != undefined && comment.active_votes.find((vote: any) => vote.voter === "hive-199021");
+
+			console.log("      " + (index + "").padStart(2, "0") + "." + (comment.author + (voted != undefined ? "*" : "")).padEnd(30, " ") + ": " + ((date.getTime() - new Date(comment.created).getTime()) / (1000 * 3600 * 24)).toFixed() + " dni temu");
 		});
 	});
 }
